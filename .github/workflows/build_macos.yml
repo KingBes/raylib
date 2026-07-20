@@ -65,39 +65,44 @@ jobs:
         echo "RAYLIB_VERSION=${RAYLIB_VERSION}" >> $GITHUB_ENV
 
         # Build raylib x86_64 static (deployment target 10.12)
-        cmake -B build/x86_64_static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
+        # NOTE: BUILD_EXAMPLES=OFF because the CI only ships the library, and linking the
+        #       examples against the static lib requires extra SDL link flags that the
+        #       default examples/CMakeLists.txt does not provide on macOS.
+        # NOTE: Output goes to build/<config>/raylib/ because the top-level CMakeLists
+        #       uses add_subdirectory(src raylib), NOT build/<config>/src/.
+        cmake -B build/x86_64_static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.12 \
           -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION"
         cmake --build build/x86_64_static --config Release
-        cp -v build/x86_64_static/src/libraylib.a /tmp/libraylib_x86_64.a
+        cp -v build/x86_64_static/raylib/libraylib.a /tmp/libraylib_x86_64.a
 
         # Build raylib arm64 static (deployment target 11.0)
-        cmake -B build/arm64_static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
+        cmake -B build/arm64_static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
           -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION"
         cmake --build build/arm64_static --config Release
-        cp -v build/arm64_static/src/libraylib.a /tmp/libraylib_arm64.a
+        cp -v build/arm64_static/raylib/libraylib.a /tmp/libraylib_arm64.a
 
         # Join x86_64 and arm64 static
         lipo -create -output build/${{ env.RELEASE_NAME }}/lib/libraylib.a /tmp/libraylib_x86_64.a /tmp/libraylib_arm64.a
 
         # Build raylib x86_64 dynamic (deployment target 10.12)
-        cmake -B build/x86_64_shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release \
+        cmake -B build/x86_64_shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.12 \
           -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION" \
           -DCMAKE_INSTALL_NAME_DIR=@rpath \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
         cmake --build build/x86_64_shared --config Release
-        cp -v build/x86_64_shared/src/libraylib.${RAYLIB_VERSION}.dylib /tmp/libraylib_x86_64.${RAYLIB_VERSION}.dylib
+        cp -v build/x86_64_shared/raylib/libraylib.${RAYLIB_VERSION}.dylib /tmp/libraylib_x86_64.${RAYLIB_VERSION}.dylib
 
         # Build raylib arm64 dynamic (deployment target 11.0)
-        cmake -B build/arm64_shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release \
+        cmake -B build/arm64_shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
           -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION" \
           -DCMAKE_INSTALL_NAME_DIR=@rpath \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
         cmake --build build/arm64_shared --config Release
-        cp -v build/arm64_shared/src/libraylib.${RAYLIB_VERSION}.dylib /tmp/libraylib_arm64.${RAYLIB_VERSION}.dylib
+        cp -v build/arm64_shared/raylib/libraylib.${RAYLIB_VERSION}.dylib /tmp/libraylib_arm64.${RAYLIB_VERSION}.dylib
 
         # Join x86_64 and arm64 dynamic
         lipo -create -output build/${{ env.RELEASE_NAME }}/lib/libraylib.${RAYLIB_VERSION}.dylib /tmp/libraylib_x86_64.${RAYLIB_VERSION}.dylib /tmp/libraylib_arm64.${RAYLIB_VERSION}.dylib

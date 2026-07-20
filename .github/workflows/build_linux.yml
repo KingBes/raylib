@@ -91,25 +91,28 @@ jobs:
       run: |
         # CMAKE_PREFIX_PATH lets find_package(SDL3/SDL2) locate the i386 cmake config
         # installed under /usr/lib/i386-linux-gnu/cmake/SDL*/
+        # NOTE: BUILD_EXAMPLES=OFF because the CI only ships the library.
+        # NOTE: Output goes to build/static/raylib/ because the top-level CMakeLists
+        #       uses add_subdirectory(src raylib), NOT build/static/src/.
         export PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}"
-        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
+        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_C_FLAGS="-m32" -DCMAKE_EXE_LINKER_FLAGS="-m32" \
           -DCMAKE_PREFIX_PATH="/usr/lib/i386-linux-gnu" -DCMAKE_LIBRARY_PATH="/usr/lib/i386-linux-gnu"
         cmake --build build/static --config Release
-        cp -v build/static/src/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
+        cp -v build/static/raylib/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
       if: matrix.bits == 32
 
     - name: Build Library (64-bit x86)
       run: |
         # Static library
-        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
         cmake --build build/static --config Release
-        cp -v build/static/src/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
+        cp -v build/static/raylib/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
         # Shared library
-        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
+        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
         cmake --build build/shared --config Release
         # Copy the real file only, then recreate soname / linker symlinks
-        cp -v build/shared/src/libraylib.so.6.0.0 build/${{ env.RELEASE_NAME }}/lib/
+        cp -v build/shared/raylib/libraylib.so.6.0.0 build/${{ env.RELEASE_NAME }}/lib/
         cd build/${{ env.RELEASE_NAME }}/lib
         ln -sf libraylib.so.6.0.0 libraylib.so.600
         ln -sf libraylib.so.600 libraylib.so
@@ -118,14 +121,14 @@ jobs:
     - name: Build Library (64-bit ARM)
       run: |
         # Static library
-        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
         cmake --build build/static --config Release
-        cp -v build/static/src/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
+        cp -v build/static/raylib/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
         # Shared library
-        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
+        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
         cmake --build build/shared --config Release
         # Copy the real file only, then recreate soname / linker symlinks
-        cp -v build/shared/src/libraylib.so.6.0.0 build/${{ env.RELEASE_NAME }}/lib/
+        cp -v build/shared/raylib/libraylib.so.6.0.0 build/${{ env.RELEASE_NAME }}/lib/
         cd build/${{ env.RELEASE_NAME }}/lib
         ln -sf libraylib.so.6.0.0 libraylib.so.600
         ln -sf libraylib.so.600 libraylib.so

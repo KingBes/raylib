@@ -41,14 +41,20 @@ jobs:
         - compiler: msvc16
           ARCH: "x86"
           VSARCHPATH: "Win32"
+          CMAKE_VS_ARCH: "Win32"
+          VCPKG_TRIPLET: "x86-windows"
           ziptarget: "win32"
         - compiler: msvc16
           ARCH: "x64"
           VSARCHPATH: "x64"
+          CMAKE_VS_ARCH: "x64"
+          VCPKG_TRIPLET: "x64-windows"
           ziptarget: "win64"
         - compiler: msvc16
           ARCH: "ARM64"
           VSARCHPATH: "ARM64"
+          CMAKE_VS_ARCH: "ARM64"
+          VCPKG_TRIPLET: "arm64-windows"
           ziptarget: "winarm64"
         exclude:
           - compiler: mingw-w64
@@ -84,15 +90,34 @@ jobs:
       uses: microsoft/setup-msbuild@v3
       if: matrix.compiler == 'msvc16'
 
+    # Install SDL3 via vcpkg for the MSVC toolchain.
+    # SDL is an external library required by the PLATFORM=SDL backend.
+    # CMake's LibraryConfigurations.cmake prefers SDL3 and falls back to SDL2.
+    - name: Install SDL (MSVC via vcpkg)
+      shell: powershell
+      run: |
+        & "$env:VCPKG_ROOT\vcpkg.exe" install sdl3:${{ matrix.VCPKG_TRIPLET }}
+      if: matrix.compiler == 'msvc16'
+
+    # Install SDL3 via the preinstalled MSYS2 for the MinGW toolchain.
+    # Prefer SDL3, fall back to SDL2 if the package is unavailable.
+    - name: Install SDL (MinGW via MSYS2)
+      shell: cmd
+      run: |
+        set PATH=C:\msys64\usr\bin;%PATH%
+        pacman -S --noconfirm --needed mingw-w64-${{ matrix.ARCH }}-SDL3 || pacman -S --noconfirm --needed mingw-w64-${{ matrix.ARCH }}-SDL2
+      if: matrix.compiler == 'mingw-w64'
+
     - name: Build Library (MinGW-w64 32bit)
       run: |
-        cd src
+        set PATH=C:\msys64\mingw64\bin;C:\msys64\mingw32\bin;%PATH%
         x86_64-w64-mingw32-gcc.exe --version
         windres.exe --version
-        dir C:\msys64\mingw64\bin
-        make PLATFORM=PLATFORM_DESKTOP CC=x86_64-w64-mingw32-gcc.exe RAYLIB_LIBTYPE=STATIC RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib" CUSTOM_CFLAGS=-m32
-        //windres.exe -i raylib.dll.rc -o raylib.dll.rc.data -O coff --target=${{ matrix.WINDRES_ARCH }}
-        //make PLATFORM=PLATFORM_DESKTOP CC=${{ matrix.ARCH }}-w64-mingw32-gcc.exe RAYLIB_LIBTYPE=SHARED RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib" -B
+        cmake -B build/static -G "MinGW Makefiles" -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release ^
+          -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc.exe -DCMAKE_C_FLAGS="-m32" ^
+          -DCMAKE_EXE_LINKER_FLAGS="-m32" -DCMAKE_LIBRARY_PATH="C:/msys64/mingw32/lib"
+        cmake --build build/static --config Release
+        copy /Y .\build\static\src\libraylib.a .\build\${{ env.RELEASE_NAME }}\lib\libraylib.a
         cd ..
       shell: cmd
       if: |
@@ -101,13 +126,22 @@ jobs:
 
     - name: Build Library (MinGW-w64 64bit)
       run: |
-        cd src
+        set PATH=C:\msys64\mingw64\bin;%PATH%
         ${{ matrix.ARCH }}-w64-mingw32-gcc.exe --version
         windres.exe --version
-        dir C:\msys64\mingw64\bin
-        make PLATFORM=PLATFORM_DESKTOP CC=${{ matrix.ARCH }}-w64-mingw32-gcc.exe RAYLIB_LIBTYPE=STATIC RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib"
-        windres.exe -i raylib.dll.rc -o raylib.dll.rc.data -O coff --target=${{ matrix.WINDRES_ARCH }}
-        make PLATFORM=PLATFORM_DESKTOP CC=${{ matrix.ARCH }}-w64-mingw32-gcc.exe RAYLIB_LIBTYPE=SHARED RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib" -B
+        :: Static library
+        cmake -B build/static -G "MinGW Makefiles" -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release ^
+          -DCMAKE_C_COMPILER=${{ matrix.ARCH }}-w64-mingw32-gcc.exe
+        cmake --build build/static --config Release
+        copy /Y .\build\static\src\libraylib.a .\build\${{ env.RELEASE_NAME }}\lib\libraylib.a
+        :: Shared library
+        :: NOTE: CMake does not link the DLL resource file (raylib.dll.rc) automatically,
+        :: the resulting DLL will lack version info / icon, but functions identically.
+        cmake -B build/shared -G "MinGW Makefiles" -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release ^
+          -DCMAKE_C_COMPILER=${{ matrix.ARCH }}-w64-mingw32-gcc.exe
+        cmake --build build/shared --config Release
+        copy /Y .\build\shared\src\libraylib.dll .\build\${{ env.RELEASE_NAME }}\lib\raylib.dll
+        copy /Y .\build\shared\src\libraylib.dll.a .\build\${{ env.RELEASE_NAME }}\lib\libraylibdll.a
         cd ..
       shell: cmd
       if: |
@@ -116,12 +150,17 @@ jobs:
 
     - name: Build Library (MSVC16)
       run: |
-        cd projects/VS2022
-        msbuild.exe raylib.sln /target:raylib /property:Configuration=Release /property:Platform=${{ matrix.ARCH }}
-        copy /Y .\build\raylib\bin\${{ matrix.VSARCHPATH }}\Release\raylib.lib .\..\..\build\${{ env.RELEASE_NAME }}\lib\raylib.lib
-        msbuild.exe raylib.sln /target:raylib /property:Configuration=Release.DLL /property:Platform=${{ matrix.ARCH }}
-        copy /Y .\build\raylib\bin\${{ matrix.VSARCHPATH }}\Release.DLL\raylib.dll .\..\..\build\${{ env.RELEASE_NAME }}\lib\raylib.dll
-        copy /Y .\build\raylib\bin\${{ matrix.VSARCHPATH }}\Release.DLL\raylib.lib .\..\..\build\${{ env.RELEASE_NAME }}\lib\raylibdll.lib
+        :: Static library
+        cmake -B build/static -G "Visual Studio 17 2022" -A ${{ matrix.CMAKE_VS_ARCH }} -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF ^
+          -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
+        cmake --build build/static --config Release
+        copy /Y .\build\static\src\Release\raylib.lib .\build\${{ env.RELEASE_NAME }}\lib\raylib.lib
+        :: Shared library
+        cmake -B build/shared -G "Visual Studio 17 2022" -A ${{ matrix.CMAKE_VS_ARCH }} -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON ^
+          -DCMAKE_TOOLCHAIN_FILE="%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
+        cmake --build build/shared --config Release
+        copy /Y .\build\shared\src\Release\raylib.dll .\build\${{ env.RELEASE_NAME }}\lib\raylib.dll
+        copy /Y .\build\shared\src\Release\raylib.lib .\build\${{ env.RELEASE_NAME }}\lib\raylibdll.lib
         cd ../..
       shell: cmd
       if: matrix.compiler == 'msvc16'

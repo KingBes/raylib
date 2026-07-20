@@ -60,44 +60,75 @@ jobs:
     - name: Setup Environment
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends libglfw3 libglfw3-dev libx11-dev libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev libxext-dev libxfixes-dev libwayland-dev libxkbcommon-dev
-        mkdir build
-        cd build
-        mkdir ${{ env.RELEASE_NAME }}
-        cd ${{ env.RELEASE_NAME }}
-        mkdir include
-        mkdir lib
-        cd ../../../raylib
-        # ${{ matrix.ARCH }}-linux-gnu-gcc -v
+        # SDL is an external library required by the PLATFORM=SDL backend.
+        # Prefer SDL3, fall back to SDL2 if not available in the repos.
+        # CMake's LibraryConfigurations.cmake mirrors the same SDL3 -> SDL2 fallback.
+        if sudo apt-get install -y --no-install-recommends libsdl3-dev; then
+          echo "SDL_PACKAGE=SDL3" >> $GITHUB_ENV
+        else
+          sudo apt-get install -y --no-install-recommends libsdl2-dev
+          echo "SDL_PACKAGE=SDL2" >> $GITHUB_ENV
+        fi
+        mkdir -p build/${{ env.RELEASE_NAME }}/include
+        mkdir -p build/${{ env.RELEASE_NAME }}/lib
 
     - name: Setup Environment (x86)
-      run : |
-          sudo apt-get install gcc-multilib
+      run: |
+        sudo apt-get install gcc-multilib
+        # 32-bit needs the i386 SDL dev package; prefer SDL3, fall back to SDL2.
+        sudo dpkg --add-architecture i386
+        sudo apt-get update -qq
+        if sudo apt-get install -y --no-install-recommends libsdl3-dev:i386; then
+          echo "SDL_PACKAGE=SDL3" >> $GITHUB_ENV
+        else
+          sudo apt-get install -y --no-install-recommends libsdl2-dev:i386
+          echo "SDL_PACKAGE=SDL2" >> $GITHUB_ENV
+        fi
       if: matrix.bits == 32 && matrix.ARCH == 'i386'
 
-    # TODO: Support 32bit (i386) static/shared library building
+    # TODO: Support 32bit (i386) shared library building
     - name: Build Library (32-bit)
       run: |
-        cd src
-        make PLATFORM=PLATFORM_DESKTOP CC=gcc RAYLIB_LIBTYPE=STATIC RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib" CUSTOM_CFLAGS="-m32" -B
-        # make PLATFORM=PLATFORM_DESKTOP CC=gcc RAYLIB_LIBTYPE=SHARED RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib" -B
-        cd ..
+        # CMAKE_PREFIX_PATH lets find_package(SDL3/SDL2) locate the i386 cmake config
+        # installed under /usr/lib/i386-linux-gnu/cmake/SDL*/
+        export PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}"
+        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_FLAGS="-m32" -DCMAKE_EXE_LINKER_FLAGS="-m32" \
+          -DCMAKE_PREFIX_PATH="/usr/lib/i386-linux-gnu" -DCMAKE_LIBRARY_PATH="/usr/lib/i386-linux-gnu"
+        cmake --build build/static --config Release
+        cp -v build/static/src/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
       if: matrix.bits == 32
 
     - name: Build Library (64-bit x86)
       run: |
-        cd src
-        make PLATFORM=PLATFORM_DESKTOP CC=gcc RAYLIB_LIBTYPE=STATIC RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib" -B
-        make PLATFORM=PLATFORM_DESKTOP CC=gcc RAYLIB_LIBTYPE=SHARED RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib" -B
-        cd ..
+        # Static library
+        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+        cmake --build build/static --config Release
+        cp -v build/static/src/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
+        # Shared library
+        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
+        cmake --build build/shared --config Release
+        # Copy the real file only, then recreate soname / linker symlinks
+        cp -v build/shared/src/libraylib.so.6.0.0 build/${{ env.RELEASE_NAME }}/lib/
+        cd build/${{ env.RELEASE_NAME }}/lib
+        ln -sf libraylib.so.6.0.0 libraylib.so.600
+        ln -sf libraylib.so.600 libraylib.so
       if: matrix.bits == 64 && matrix.ARCH == 'x86_64'
 
     - name: Build Library (64-bit ARM)
       run: |
-        cd src
-        make PLATFORM=PLATFORM_DESKTOP CC=gcc RAYLIB_LIBTYPE=STATIC RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib" -B
-        make PLATFORM=PLATFORM_DESKTOP CC=gcc RAYLIB_LIBTYPE=SHARED RAYLIB_RELEASE_PATH="../build/${{ env.RELEASE_NAME }}/lib" -B
-        cd ..
+        # Static library
+        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+        cmake --build build/static --config Release
+        cp -v build/static/src/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
+        # Shared library
+        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release
+        cmake --build build/shared --config Release
+        # Copy the real file only, then recreate soname / linker symlinks
+        cp -v build/shared/src/libraylib.so.6.0.0 build/${{ env.RELEASE_NAME }}/lib/
+        cd build/${{ env.RELEASE_NAME }}/lib
+        ln -sf libraylib.so.6.0.0 libraylib.so.600
+        ln -sf libraylib.so.600 libraylib.so
       if: matrix.bits == 64 && matrix.ARCH == 'aarch64'
 
     - name: Generate Artifacts

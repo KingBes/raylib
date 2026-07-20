@@ -40,14 +40,20 @@ jobs:
     - name: Setup Environment
       run: |
         # SDL is an external library required by the PLATFORM=SDL backend.
-        # Prefer SDL3, fall back to SDL2 if the formula is unavailable.
-        # CMake's LibraryConfigurations.cmake mirrors the same SDL3 -> SDL2 fallback.
-        if brew install sdl3; then
-          echo "SDL_PACKAGE=SDL3" >> $GITHUB_ENV
-        else
-          brew install sdl2
-          echo "SDL_PACKAGE=SDL2" >> $GITHUB_ENV
-        fi
+        # We build SDL3 from source as a STATIC library and install it to a
+        # prefix that raylib's find_package(SDL3) will pick up. This embeds
+        # SDL3 into raylib (via SDL3::SDL3-static) so the resulting dylib/a
+        # has no runtime dependency on libSDL3.dylib.
+        # Homebrew's sdl3 bottle ships only the shared library, so we cannot
+        # rely on `brew install sdl3` for static linking.
+        SDL3_PREFIX=/tmp/sdl3-static
+        git clone --depth 1 --branch release-3.2.x https://github.com/libsdl-org/SDL.git /tmp/SDL3
+        cmake -B /tmp/SDL3/build -S /tmp/SDL3 \
+          -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DSDL_TEST=OFF \
+          -DCMAKE_INSTALL_PREFIX=$SDL3_PREFIX \
+          -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.12
+        cmake --build /tmp/SDL3/build --config Release --target install -j$(sysctl -n hw.ncpu)
+        echo "SDL3_PREFIX=$SDL3_PREFIX" >> $GITHUB_ENV
         mkdir -p build/${{ env.RELEASE_NAME }}/include
         mkdir -p build/${{ env.RELEASE_NAME }}/lib
 
@@ -72,14 +78,16 @@ jobs:
         #       uses add_subdirectory(src raylib), NOT build/<config>/src/.
         cmake -B build/x86_64_static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.12 \
-          -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION"
+          -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION" \
+          -DCMAKE_PREFIX_PATH=$SDL3_PREFIX
         cmake --build build/x86_64_static --config Release
         cp -v build/x86_64_static/raylib/libraylib.a /tmp/libraylib_x86_64.a
 
         # Build raylib arm64 static (deployment target 11.0)
         cmake -B build/arm64_static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-          -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION"
+          -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION" \
+          -DCMAKE_PREFIX_PATH=$SDL3_PREFIX
         cmake --build build/arm64_static --config Release
         cp -v build/arm64_static/raylib/libraylib.a /tmp/libraylib_arm64.a
 
@@ -90,6 +98,7 @@ jobs:
         cmake -B build/x86_64_shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_ARCHITECTURES=x86_64 -DCMAKE_OSX_DEPLOYMENT_TARGET=10.12 \
           -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION" \
+          -DCMAKE_PREFIX_PATH=$SDL3_PREFIX \
           -DCMAKE_INSTALL_NAME_DIR=@rpath \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
         cmake --build build/x86_64_shared --config Release
@@ -99,6 +108,7 @@ jobs:
         cmake -B build/arm64_shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
           -DCMAKE_C_FLAGS="-DGL_SILENCE_DEPRECATION" \
+          -DCMAKE_PREFIX_PATH=$SDL3_PREFIX \
           -DCMAKE_INSTALL_NAME_DIR=@rpath \
           -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
         cmake --build build/arm64_shared --config Release

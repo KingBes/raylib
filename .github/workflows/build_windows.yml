@@ -87,16 +87,14 @@ jobs:
         :: Shared library
         :: NOTE: CMake does not link the DLL resource file (raylib.dll.rc) automatically,
         :: the resulting DLL will lack version info / icon, but functions identically.
+        :: NOTE: SDL is statically linked into raylib (via SDL3::SDL3-static in
+        ::       cmake/LibraryConfigurations.cmake), so no SDL3.dll is shipped.
         cmake -B build\shared -G "MinGW Makefiles" ^
           -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release ^
           -DCMAKE_C_COMPILER=${{ matrix.ARCH }}-w64-mingw32-gcc.exe
         cmake --build build\shared --config Release
         copy /Y .\build\shared\raylib\libraylib.dll     .\build\${{ env.RELEASE_NAME }}\lib\raylib.dll
         copy /Y .\build\shared\raylib\libraylib.dll.a   .\build\${{ env.RELEASE_NAME }}\lib\libraylibdll.a
-
-        :: Ship the SDL runtime DLLs alongside raylib.dll so end users can run immediately
-        copy /Y "${{ matrix.MINGW_BIN }}\SDL3.dll"   .\build\${{ env.RELEASE_NAME }}\lib\ 2>nul
-        copy /Y "${{ matrix.MINGW_BIN }}\SDL2.dll"   .\build\${{ env.RELEASE_NAME }}\lib\ 2>nul
 
     - name: Generate Artifacts
       shell: cmd

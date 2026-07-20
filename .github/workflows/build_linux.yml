@@ -61,43 +61,63 @@ jobs:
       run: |
         sudo apt-get update -qq
         # SDL is an external library required by the PLATFORM=SDL backend.
-        # Prefer SDL3, fall back to SDL2 if not available in the repos.
-        # CMake's LibraryConfigurations.cmake mirrors the same SDL3 -> SDL2 fallback.
-        if sudo apt-get install -y --no-install-recommends libsdl3-dev; then
-          echo "SDL_PACKAGE=SDL3" >> $GITHUB_ENV
-        else
-          sudo apt-get install -y --no-install-recommends libsdl2-dev
-          echo "SDL_PACKAGE=SDL2" >> $GITHUB_ENV
-        fi
+        # We build SDL3 from source as a STATIC library with -fPIC so it can be
+        # linked into BOTH libraylib.a (static) and libraylib.so (shared).
+        # The distro's libsdl2-dev ships libSDL2.a compiled WITHOUT -fPIC, which
+        # breaks linking into a shared library:
+        #   relocation R_X86_64_PC32 ... can not be used when making a shared object
+        # Building SDL3 ourselves sidesteps both the PIC issue and the SDL2/SDL3
+        # availability question across Ubuntu versions / architectures.
+        sudo apt-get install -y --no-install-recommends build-essential git cmake ninja-build \
+          libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+          libxfixes-dev libxss-dev libwayland-dev libxkbcommon-dev libdbus-1-dev libpulse-dev \
+          libasound2-dev libsndio-dev
+        SDL3_PREFIX=/tmp/sdl3-static
+        git clone --depth 1 --branch release-3.2.x https://github.com/libsdl-org/SDL.git /tmp/SDL3
+        cmake -B /tmp/SDL3/build -S /tmp/SDL3 -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DSDL_TEST=OFF \
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+          -DCMAKE_INSTALL_PREFIX=$SDL3_PREFIX
+        cmake --build /tmp/SDL3/build --target install
+        echo "SDL3_PREFIX=$SDL3_PREFIX" >> $GITHUB_ENV
         mkdir -p build/${{ env.RELEASE_NAME }}/include
         mkdir -p build/${{ env.RELEASE_NAME }}/lib
 
     - name: Setup Environment (x86)
       run: |
         sudo apt-get install gcc-multilib
-        # 32-bit needs the i386 SDL dev package; prefer SDL3, fall back to SDL2.
+        # Build a 32-bit SDL3 static lib from source (with -fPIC) so it can be
+        # linked into both libraylib.a and libraylib.so for the i386 target.
         sudo dpkg --add-architecture i386
         sudo apt-get update -qq
-        if sudo apt-get install -y --no-install-recommends libsdl3-dev:i386; then
-          echo "SDL_PACKAGE=SDL3" >> $GITHUB_ENV
-        else
-          sudo apt-get install -y --no-install-recommends libsdl2-dev:i386
-          echo "SDL_PACKAGE=SDL2" >> $GITHUB_ENV
-        fi
+        sudo apt-get install -y --no-install-recommends \
+          libx11-dev:i386 libxext-dev:i386 libxrandr-dev:i386 libxinerama-dev:i386 \
+          libxcursor-dev:i386 libxi-dev:i386 libxfixes-dev:i386 libxss-dev:i386 \
+          libwayland-dev:i386 libxkbcommon-dev:i386 libdbus-1-dev:i386 \
+          libpulse-dev:i386 libasound2-dev:i386 libsndio-dev:i386
+        SDL3_PREFIX=/tmp/sdl3-static-i386
+        cmake -B /tmp/SDL3/build32 -S /tmp/SDL3 -G Ninja \
+          -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DSDL_TEST=OFF \
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+          -DCMAKE_INSTALL_PREFIX=$SDL3_PREFIX \
+          -DCMAKE_C_FLAGS="-m32" -DCMAKE_EXE_LINKER_FLAGS="-m32" \
+          -DCMAKE_LIBRARY_PATH="/usr/lib/i386-linux-gnu" \
+          -DCMAKE_PREFIX_PATH="/usr/lib/i386-linux-gnu"
+        cmake --build /tmp/SDL3/build32 --target install
+        echo "SDL3_PREFIX=$SDL3_PREFIX" >> $GITHUB_ENV
       if: matrix.bits == 32 && matrix.ARCH == 'i386'
 
     # TODO: Support 32bit (i386) shared library building
     - name: Build Library (32-bit)
       run: |
-        # CMAKE_PREFIX_PATH lets find_package(SDL3/SDL2) locate the i386 cmake config
-        # installed under /usr/lib/i386-linux-gnu/cmake/SDL*/
+        # CMAKE_PREFIX_PATH points at our locally-built 32-bit SDL3 static lib.
         # NOTE: BUILD_EXAMPLES=OFF because the CI only ships the library.
         # NOTE: Output goes to build/static/raylib/ because the top-level CMakeLists
         #       uses add_subdirectory(src raylib), NOT build/static/src/.
         export PKG_CONFIG_PATH="/usr/lib/i386-linux-gnu/pkgconfig:${PKG_CONFIG_PATH}"
         cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_C_FLAGS="-m32" -DCMAKE_EXE_LINKER_FLAGS="-m32" \
-          -DCMAKE_PREFIX_PATH="/usr/lib/i386-linux-gnu" -DCMAKE_LIBRARY_PATH="/usr/lib/i386-linux-gnu"
+          -DCMAKE_PREFIX_PATH="$SDL3_PREFIX;/usr/lib/i386-linux-gnu" -DCMAKE_LIBRARY_PATH="/usr/lib/i386-linux-gnu"
         cmake --build build/static --config Release
         cp -v build/static/raylib/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
       if: matrix.bits == 32
@@ -105,11 +125,13 @@ jobs:
     - name: Build Library (64-bit x86)
       run: |
         # Static library
-        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
+        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_PREFIX_PATH=$SDL3_PREFIX
         cmake --build build/static --config Release
         cp -v build/static/raylib/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
         # Shared library
-        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
+        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_PREFIX_PATH=$SDL3_PREFIX
         cmake --build build/shared --config Release
         # Copy the real file only, then recreate soname / linker symlinks
         cp -v build/shared/raylib/libraylib.so.6.0.0 build/${{ env.RELEASE_NAME }}/lib/
@@ -121,11 +143,13 @@ jobs:
     - name: Build Library (64-bit ARM)
       run: |
         # Static library
-        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
+        cmake -B build/static -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_PREFIX_PATH=$SDL3_PREFIX
         cmake --build build/static --config Release
         cp -v build/static/raylib/libraylib.a build/${{ env.RELEASE_NAME }}/lib/
         # Shared library
-        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
+        cmake -B build/shared -S . -DPLATFORM=SDL -DBUILD_SHARED_LIBS=ON -DBUILD_EXAMPLES=OFF -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_PREFIX_PATH=$SDL3_PREFIX
         cmake --build build/shared --config Release
         # Copy the real file only, then recreate soname / linker symlinks
         cp -v build/shared/raylib/libraylib.so.6.0.0 build/${{ env.RELEASE_NAME }}/lib/
